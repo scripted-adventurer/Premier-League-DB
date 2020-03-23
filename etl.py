@@ -1,4 +1,6 @@
 import models
+import settings
+from pymongo import MongoClient
 import urllib.request
 import json
 import copy 
@@ -24,24 +26,26 @@ class ETL:
     self.statuses = 'U,P,C'
     # not entirely sure what this does, works as either true or false
     self.alt_ids = 'false'
-    self.url = (f"https://footballapi.pulselive.com/football/fixtures?" + 
-      f"comps={self.comps}&compSeasons={self.season_id}&" + 
-      f"page={self.page_num}&pageSize={self.page_size}&sort={self.page_size}&"
+    self.url = (f"https://footballapi.pulselive.com/football/fixtures?"
+      f"comps={self.comps}&compSeasons={self.season_id}&"
+      f"page={self.page_num}&pageSize={self.page_size}&sort={self.sort}&"
       f"statuses={self.statuses}&altIds={self.alt_ids}")
-    self.headers = {'Origin': 'https://www.premierleague.com'}
+    self.headers = {'Connection': 'keep-alive',
+      'Origin': 'https://www.premierleague.com',
+      'Host': 'footballapi.pulselive.com'}
     # the format to transform to
     self.match = models.match
   def extract(self):
-    # request = urllib.request.Request(self.url, self.headers)
-    # response = urllib.request.urlopen(request)
-    # self.api_data = json.loads(response.read().decode(response.info().get_param(
-    #   'charset') or 'utf-8'))
-    with open('full_2019_2020.json') as json_file:
-      self.api_data = json.load(json_file)
+    request = urllib.request.Request(self.url, headers=self.headers)
+    response = urllib.request.urlopen(request)
+    self.api_data = json.loads(response.read().decode(response.info().get_param(
+      'charset') or 'utf-8'))
+    # with open('full_2019_2020.json') as json_file:
+    #   self.api_data = json.load(json_file)
   def transform(self):
     # pull the desired fields from the full season JSON response
     self.transformed = {'matches': []}
-    for match in self.api_data[0]['content']:
+    for match in self.api_data['content']:
       this_match = copy.deepcopy(self.match)
       this_match['id'] = match['id']
       this_match['season'] = match['gameweek']['compSeason']['label']
@@ -75,15 +79,27 @@ class ETL:
     # an optional step to save the transformed JSON file locally
     # set the filename for the transformed json file
     # change the / to - so it's not interpreted as a directory
-    self.season_label = (self.api_data[0]['content'][0]['gameweek']['compSeason']
+    self.season_label = (self.api_data['content'][0]['gameweek']['compSeason']
       ['label']).replace('/', '-')
     self.output_file = 'json/' + self.season_label + '.json'
     with open(self.output_file, 'w') as output_file:
       output_file.write(json.dumps(self.transformed, indent=2))
   def load(self):
-    pass 
+    self.client = MongoClient(host=settings.database['host'], 
+      port=settings.database['port'], username=settings.database['user'], 
+      password=settings.database['password'], 
+      authSource=settings.database['db'])
+    self.db = self.client[settings.database['db']]
+    if len(list(self.db.matches.find({}))):
+      # update or insert each match document
+      for match in self.transformed['matches']:
+        self.db.matches.find_one_and_replace({'id': match['id']}, match, 
+          upsert=True)
+    else:
+      # bulk insert all match documents
+      self.db.matches.insert_many(self.transformed['matches'])
   def run(self):
     self.extract()
     self.transform()
     self.save_json()
-    # self.load()  
+    self.load()
