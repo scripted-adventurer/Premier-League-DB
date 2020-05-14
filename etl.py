@@ -40,8 +40,6 @@ class ETL:
     response = urllib.request.urlopen(request)
     self.api_data = json.loads(response.read().decode(response.info().get_param(
       'charset') or 'utf-8'))
-    # with open('full_2019_2020.json') as json_file:
-    #   self.api_data = json.load(json_file)
   def transform(self):
     # pull the desired fields from the full season JSON response
     self.transformed = {'matches': []}
